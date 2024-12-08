@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+// the part i didn't understand was that the only illegible places for the O was on the guard and directly north of the guard
+
 const showGrid = false
 
 var internalDeadlock = 0
