@@ -35,5 +35,7 @@ func main() {
 	// fmt.Println("d5p2:", a.D5P2())
 
 	// fmt.Println("d6p1:", a.D6P1())
-	fmt.Println("d6p2:", a.D6P2())
+	// fmt.Println("d6p2:", a.D6P2())
+
+	fmt.Println("d7p1:", a.D7P1())
 }
