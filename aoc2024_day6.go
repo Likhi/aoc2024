@@ -8,10 +8,11 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"time"
 )
 
-const showGrid = true
+const showGrid = false
+
+var internalDeadlock = 0
 
 type direction string
 
@@ -28,9 +29,10 @@ type point struct {
 }
 
 type guard struct {
-	location *point               // the guard is here
-	visited  map[*point]direction // the guard as been here already and was pointing some direction
-	facing   direction            // left <, right >, up ^, down v // the guard will move this direction on their next move
+	location     *point                 // the guard is here
+	uniquePoints map[*point]direction   // the guard as been here already and was pointing some direction
+	history      map[*point][]direction // the guard has been at this point and has faced that direction
+	facing       direction              // left <, right >, up ^, down v // the guard will move this direction on their next move
 }
 
 func (x *aoc2024) D6P1() int {
@@ -55,7 +57,7 @@ func (x *aoc2024) D6P1() int {
 		}
 	}
 
-	return len(guard.visited)
+	return len(guard.uniquePoints)
 }
 
 func (x *aoc2024) D6P2() int {
@@ -64,7 +66,8 @@ func (x *aoc2024) D6P2() int {
 
 	// put an obstruction "O" on all points next to guard and south of guard and check if deadlock
 	deadlocks := 0
-	for _, rows := range grid[guard.location.row:] {
+	// for _, rows := range grid[guard.location.row:] {
+	for _, rows := range grid {
 		for _, pt := range rows {
 			lastSpaceType = pt.spaceType
 			if pt.spaceType != "^" && pt.spaceType != "#" {
@@ -73,40 +76,50 @@ func (x *aoc2024) D6P2() int {
 				continue
 			}
 
-			// if showGrid {
-			// 	printGridWithGuard(grid, guard)
-			// }
+			if showGrid {
+				printGridWithGuard(grid, guard)
+				fmt.Scanln()
+			}
 
 			// then attempt the simulation
 			for {
 				done, err := guard.step(grid)
 				if err != nil && err.Error() == "Deadlock" {
-					// fmt.Println("err:", err) // assuming this is only deadlock error :)
-					fmt.Printf("deadlock with 'O' at [%d,%d]\n", pt.row, pt.col)
 					deadlocks++
-					printGridWithGuard(grid, guard)
-					time.Sleep(2 * time.Second)
+					// fmt.Println("deadlocks", deadlocks)
+					// fmt.Printf("deadlock with 'O' at [%d,%d]\n", pt.row, pt.col)
+					if showGrid {
+						// printGridWithGuard(grid, guard)
+						// fmt.Println("deadlocks", deadlocks)
+						// fmt.Printf("deadlock with 'O' at [%d,%d]\n", pt.row, pt.col)
+					}
+
 					break
 				}
 
-				// if showGrid {
-				// 	printGridWithGuard(grid, guard)
-				// }
+				if showGrid {
+					printGridWithGuard(grid, guard)
+				}
 
 				if done {
 					break
 				}
 			}
-			pt.spaceType = lastSpaceType // revert the "O"
+
+			// debugging....
+			// printGridWithGuard(grid, guard)
+			// fmt.Println("deadlocks:", deadlocks)
+			// fmt.Scanln()
+
+			// revert the "O"
+			pt.spaceType = lastSpaceType
 
 			// reset the guard
 			guard.facing = up
 			guard.location = guardStart
-			guard.visited = map[*point]direction{guardStart: up}
-
-			// fmt.Println("deadlocks", deadlocks)
+			guard.uniquePoints = map[*point]direction{guardStart: up}
+			guard.history = map[*point][]direction{guardStart: {up}}
 		}
-
 	}
 
 	return deadlocks
@@ -140,7 +153,8 @@ func readInputToGrid() ([][]*point, *guard, *point) {
 
 				retGuard.facing = up
 				retGuard.location = newPoint
-				retGuard.visited = map[*point]direction{newPoint: up}
+				retGuard.uniquePoints = map[*point]direction{newPoint: up}
+				retGuard.history = map[*point][]direction{newPoint: {up}}
 				retStartPoint = newPoint
 			}
 
@@ -163,21 +177,18 @@ func (g *guard) step(grid [][]*point) (bool, error) {
 			return true, nil
 		}
 
-		// detect deadlock (if guard was at grid[nextrow][nextcol] with same direction already, it's deadlock)
-		if _, beenThere := g.visited[grid[nextrow][nextcol]]; beenThere {
-			wasFacing := g.visited[grid[nextrow][nextcol]]
-			if wasFacing == g.facing {
+		// update new location arrival
+		if grid[nextrow][nextcol].spaceType == "." {
+			if g.updateLocation(grid[nextrow][nextcol], up) {
 				return false, fmt.Errorf("Deadlock")
 			}
 		}
 
-		// update new location arrival
-		if grid[nextrow][nextcol].spaceType == "." {
-			g.updateLocation(grid[nextrow][nextcol], up)
-		}
-
 		if grid[nextrow][nextcol].spaceType == "#" || grid[nextrow][nextcol].spaceType == "O" {
-			g.facing = right
+			// g.facing = right
+			if g.updateLocation(grid[g.location.row][g.location.col], right) {
+				return false, fmt.Errorf("Deadlock")
+			}
 		}
 
 	case down:
@@ -187,20 +198,17 @@ func (g *guard) step(grid [][]*point) (bool, error) {
 			return true, nil
 		}
 
-		// detect deadlock (if guard was at grid[nextrow][nextcol] with same direction already, it's deadlock)
-		if _, beenThere := g.visited[grid[nextrow][nextcol]]; beenThere {
-			wasFacing := g.visited[grid[nextrow][nextcol]]
-			if wasFacing == down {
+		if grid[nextrow][nextcol].spaceType == "." {
+			if g.updateLocation(grid[nextrow][nextcol], down) {
 				return false, fmt.Errorf("Deadlock")
 			}
 		}
 
-		if grid[nextrow][nextcol].spaceType == "." {
-			g.updateLocation(grid[nextrow][nextcol], down)
-		}
-
 		if grid[nextrow][nextcol].spaceType == "#" || grid[nextrow][nextcol].spaceType == "O" {
-			g.facing = left
+			// g.facing = left
+			if g.updateLocation(grid[g.location.row][g.location.col], left) {
+				return false, fmt.Errorf("Deadlock")
+			}
 		}
 
 	case right:
@@ -210,20 +218,17 @@ func (g *guard) step(grid [][]*point) (bool, error) {
 			return true, nil
 		}
 
-		// detect deadlock (if guard was at grid[nextrow][nextcol] with same direction already, it's deadlock)
-		if _, beenThere := g.visited[grid[nextrow][nextcol]]; beenThere {
-			wasFacing := g.visited[grid[nextrow][nextcol]]
-			if wasFacing == right {
+		if grid[nextrow][nextcol].spaceType == "." {
+			if g.updateLocation(grid[nextrow][nextcol], right) {
 				return false, fmt.Errorf("Deadlock")
 			}
 		}
 
-		if grid[nextrow][nextcol].spaceType == "." {
-			g.updateLocation(grid[nextrow][nextcol], right)
-		}
-
 		if grid[nextrow][nextcol].spaceType == "#" || grid[nextrow][nextcol].spaceType == "O" {
-			g.facing = down
+			// g.facing = down
+			if g.updateLocation(grid[g.location.row][g.location.col], down) {
+				return false, fmt.Errorf("Deadlock")
+			}
 		}
 
 	case left:
@@ -233,21 +238,19 @@ func (g *guard) step(grid [][]*point) (bool, error) {
 			return true, nil
 		}
 
-		// detect deadlock (if guard was at grid[nextrow][nextcol] with same direction already, it's deadlock)
-		if _, beenThere := g.visited[grid[nextrow][nextcol]]; beenThere {
-			wasFacing := g.visited[grid[nextrow][nextcol]]
-			if wasFacing == left {
+		if grid[nextrow][nextcol].spaceType == "." {
+			if g.updateLocation(grid[nextrow][nextcol], left) {
 				return false, fmt.Errorf("Deadlock")
 			}
 		}
 
-		if grid[nextrow][nextcol].spaceType == "." {
-			g.updateLocation(grid[nextrow][nextcol], left)
+		if grid[nextrow][nextcol].spaceType == "#" || grid[nextrow][nextcol].spaceType == "O" {
+			// g.facing = up
+			if g.updateLocation(grid[g.location.row][g.location.col], up) { // don't move, just rotate
+				return false, fmt.Errorf("Deadlock")
+			}
 		}
 
-		if grid[nextrow][nextcol].spaceType == "#" || grid[nextrow][nextcol].spaceType == "O" {
-			g.facing = up
-		}
 	default:
 		log.Fatalf("unknown facing direction %v", g.facing)
 	}
@@ -272,22 +275,44 @@ func gridPoints(grid [][]*point) int {
 	return len(grid) * len(grid[0])
 }
 
-// updateLocation changes the guard's location to point and updates the guard's visited points field
-func (g *guard) updateLocation(p *point, d direction) {
+// updateLocation changes the guard's location to point and updates the guard's visited points field.
+// Returns true deadlock detected (i.e. would be updating with previous location + facing direction)
+func (g *guard) updateLocation(p *point, d direction) bool {
 	g.location = p
-	g.addVisited(p, d)
+	g.facing = d
+	return g.addVisited(p, d)
 }
 
 // addVisited adds the point p to the guard's visited points tracker
-func (g *guard) addVisited(p *point, d direction) {
-	g.visited[p] = d
+// Returns true deadlock detected (i.e. would be updating with previous location + facing direction)
+func (g *guard) addVisited(p *point, d direction) bool {
+	// check for deadlock condition
+	deadlock := contains(g.history[p], d)
+	// if deadlock {
+	// fmt.Println("deadlock!")
+	// }
+
+	// update visited tracker
+	g.uniquePoints[p] = d
+	g.history[p] = append(g.history[p], d)
+
+	return deadlock
 }
 
 // hasVisited returns true if the guard as been the point p
 func (g *guard) hasVisited(p *point) bool {
-	_, ok := g.visited[p]
+	_, ok := g.uniquePoints[p]
 
 	return ok
+}
+
+func contains(s []direction, e direction) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }
 
 // printGrid prints the grid.
@@ -315,7 +340,7 @@ func printGrid(grid [][]*point, g *guard) {
 		}
 		fmt.Println()
 	}
-	fmt.Println("~~~~~~~~~~~~~~~~~~~~~~~~~~~", "visited:", len(g.visited))
+	fmt.Println("~~~~~~~~~~~~~~~~~~~~~~~~~~~", "visited:", len(g.uniquePoints))
 	fmt.Print("\033[H")
 }
 
@@ -338,7 +363,7 @@ func printGridWithGuard(grid [][]*point, g *guard) {
 				default:
 					log.Fatalf("unexpected direction %v", g.facing)
 				}
-			} else if _, ok := g.visited[pt]; ok {
+			} else if _, ok := g.uniquePoints[pt]; ok {
 				fmt.Print("X")
 			} else {
 				fmt.Print(pt.spaceType) // a . or #
@@ -347,7 +372,7 @@ func printGridWithGuard(grid [][]*point, g *guard) {
 		}
 		fmt.Println()
 	}
-	fmt.Println("~~~~~~~~~~~~~~~~~~~~~~~~~~~", "visited:", len(g.visited))
+	fmt.Println("~~~~~~~~~~~~~~~~~~~~~~~~~~~", "visited:", len(g.uniquePoints))
 	fmt.Print("\033[H")
 }
 
@@ -367,7 +392,7 @@ func printGuard(g *guard, suppressVisited bool) {
 	fmt.Println("guard facing:", g.facing)
 	if !suppressVisited {
 		fmt.Print("guard as visited points:")
-		for p := range g.visited {
+		for p := range g.uniquePoints {
 			fmt.Printf("[%d,%d], ", p.row, p.col)
 		}
 		fmt.Println("")
